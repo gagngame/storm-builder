@@ -14,12 +14,17 @@ jobs:
           - arch: arm64
             qt_version: 6.10.0
     
+    env:
+      BUILD_ROOT: ${{ github.workspace }}
+    
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: 'recursive'
+          fetch-depth: 1
 
+      # EXACT COPY from working build-windows-squirrel.yml.disabled
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
@@ -28,25 +33,21 @@ jobs:
           add-tools-to-path: false
           version: ${{ matrix.qt_version }}
           arch: ${{ matrix.arch == 'arm64' && 'win64_msvc2022_arm64_cross_compiled' || 'win64_msvc2022_64' }}
-          # REMOVED: modules: qtquick qtquickcontrols2 qtsvg (these don't exist)
 
-      - name: Build Storm
-        shell: bash
+      - name: Build Storm (${{ matrix.arch }})
+        shell: cmd
         run: |
-          # EXPLICITLY ADD QT BIN TO PATH (like working version)
-          export PATH="${{ runner.workspace }}/Qt/${{ matrix.qt_version }}/${{ matrix.arch == 'arm64' && 'msvc2022_arm64' || 'msvc2022_64' }}/bin:$PATH"
-          
-          # Debug: Check if windeployqt exists
-          ls "${{ runner.workspace }}/Qt/${{ matrix.qt_version }}/${{ matrix.arch == 'arm64' && 'msvc2022_arm64' || 'msvc2022_64' }}/bin/windeployqt.exe"
-          
-          ./scripts/build-arch.bat Release ${{ matrix.arch }}
+          set "PATH=%QT_PATH%;%PATH%"
+          scripts\build-arch.bat Release ${{ matrix.arch }}
+        env:
+          QT_PATH: ${{ runner.workspace }}\Qt\${{ matrix.qt_version }}\${{ matrix.arch == 'arm64' && 'msvc2022_arm64' || 'msvc2022_64' }}\bin
 
       - name: Package with Squirrel (${{ matrix.arch }})
         shell: cmd
         run: |
           cd %BUILD_ROOT%\installer\squirrel
 
-          REM Follow moonlight-qt: use passed release_version (from version.txt)
+          REM Use tag from main repo trigger
           set VERSION=${{ github.event.client_payload.tag }}
 
           if not exist nupkg mkdir nupkg
@@ -61,7 +62,7 @@ jobs:
             ren ".\Releases-arm64\Setup.exe" "Setup-arm64.exe"
           )
 
-      - name: Upload Windows Artifacts (${{ matrix.arch }})
+      - name: Upload Artifacts (${{ matrix.arch }})
         uses: actions/upload-artifact@v4
         with:
           name: squirrel-${{ matrix.arch }}
@@ -71,11 +72,13 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: 'recursive'
+          fetch-depth: 1
 
+      # EXACT COPY from working build-appimage.yml.disabled  
       - name: Cache APT Packages
         uses: actions/cache@v4
         with:
@@ -98,7 +101,6 @@ jobs:
           host: linux
           target: desktop
           arch: linux_gcc_64
-          # REMOVED: modules: qtquick qtquickcontrols2 qtsvg (these don't exist)
 
       - name: Install Dependencies
         run: |
@@ -115,20 +117,15 @@ jobs:
 
       - name: Build AppImage
         run: |
-          # Ensure paths are correct (like working version)
-          export PATH="/opt/qt/6.8.0/gcc_64/bin:/usr/local/bin:$PATH"
-          
-          # Debug checks
-          which qmake
-          which linuxdeployqt
-          
+          export PATH="/opt/qt/6.8.0/gcc_64/bin:$PATH"
           bash scripts/build-appimage.sh
 
-      - name: Upload Linux Artifact
+      - name: Upload AppImage
         uses: actions/upload-artifact@v4
         with:
           name: linux-appimage
           path: build/installer-release/*.AppImage
+          if-no-files-found: error
 
   upload-artifacts:
     needs: [build-windows, build-linux]
