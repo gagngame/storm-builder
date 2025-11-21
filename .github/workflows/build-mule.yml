@@ -2,24 +2,52 @@ name: Build Mule
 on:
   repository_dispatch:
     types: [build-request]
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: 'Tag to build'
-        required: true
-        default: 'v6.1.26'
 
 jobs:
-  build-linux:
-    runs-on: ubuntu-latest  # FREE unlimited minutes!
+  build-windows:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        include:
+          - arch: x64
+            qt_version: 6.10.1
+          - arch: arm64
+            qt_version: 6.10.0
     
     steps:
-      - name: Checkout Private Repo
+      - name: Checkout
         uses: actions/checkout@v4
         with:
-          repository: ${{ secrets.MAIN_REPO_NAME }}
-          token: ${{ secrets.MAIN_REPO_PAT }}
-          ref: ${{ github.event.inputs.tag || github.event.client_payload.tag }}
+          submodules: recursive
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          cache: true
+          set-env: false
+          add-tools-to-path: false
+          version: ${{ matrix.qt_version }}
+          arch: ${{ matrix.arch == 'arm64' && 'win64_msvc2022_arm64_cross_compiled' || 'win64_msvc2022_64' }}
+          modules: 'qtquick qtquickcontrols2 qtsvg'  # ← ADD MODULES
+
+      - name: Build Storm
+        shell: bash  # ← CHANGED FROM cmd TO bash
+        run: |
+          # EXPLICITLY ADD QT BIN TO PATH (like working version)
+          export PATH="${{ runner.workspace }}/Qt/${{ matrix.qt_version }}/${{ matrix.arch == 'arm64' && 'msvc2022_arm64' || 'msvc2022_64' }}/bin:$PATH"
+          
+          # Debug: Check if windeployqt exists
+          ls "${{ runner.workspace }}/Qt/${{ matrix.qt_version }}/${{ matrix.arch == 'arm64' && 'msvc2022_arm64' || 'msvc2022_64' }}/bin/windeployqt.exe"
+          
+          ./scripts/build-arch.bat Release ${{ matrix.arch }}
+
+  build-linux:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
           submodules: recursive
 
       - name: Cache APT Packages
@@ -36,6 +64,16 @@ jobs:
           path: /usr/local/bin/linuxdeployqt
           key: linuxdeployqt-${{ runner.os }}-continuous
 
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          cache: true
+          version: 6.8.0
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          modules: 'qtquick qtquickcontrols2 qtsvg'  # ← ADD MODULES (CRITICAL FIX)
+
       - name: Install Dependencies
         run: |
           sudo apt-get update
@@ -49,66 +87,42 @@ jobs:
             sudo mv linuxdeployqt /usr/local/bin/linuxdeployqt
           fi
 
-      - name: Install Qt
-        uses: jurplel/install-qt-action@v4
-        with:
-          cache: true
-          version: 6.8.0
-          host: linux
-          target: desktop
-          arch: linux_gcc_64
-
       - name: Build AppImage
         run: |
-          export PATH="/opt/qt/6.8.0/gcc_64/bin:$PATH"
+          # Ensure paths are correct (like working version)
+          export PATH="/opt/qt/6.8.0/gcc_64/bin:/usr/local/bin:$PATH"
+          
+          # Debug checks
+          which qmake
+          which linuxdeployqt
+          
           bash scripts/build-appimage.sh
 
-      - name: Upload to Release
-        uses: softprops/action-gh-release@v1
-        with:
-          token: ${{ secrets.MAIN_REPO_PAT }}
-          repository: ${{ secrets.MAIN_REPO_NAME }}
-          tag_name: ${{ github.event.inputs.tag || github.event.client_payload.tag }}
-          files: ./build/installer-release/*.AppImage
-
-  build-windows:
-    runs-on: windows-latest  # FREE unlimited minutes!
+  upload-artifacts:
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
     
     steps:
-      - name: Checkout Private Repo
-        uses: actions/checkout@v4
+      - name: Download Windows x64
+        uses: actions/download-artifact@v4
         with:
-          repository: ${{ secrets.MAIN_REPO_NAME }}
-          token: ${{ secrets.MAIN_REPO_PAT }}
-          ref: ${{ github.event.inputs.tag || github.event.client_payload.tag }}
-          submodules: recursive
+          name: squirrel-x64
+          path: artifacts/
 
-      - name: Install Qt
-        uses: jurplel/install-qt-action@v4
+      - name: Download Windows ARM64
+        uses: actions/download-artifact@v4
         with:
-          cache: true
-          version: 6.10.1
-          host: windows
-          target: desktop
-          arch: win64_msvc2022_64
+          name: squirrel-arm64
+          path: artifacts/
 
-      - name: Build Storm
-        shell: bash  # ✅ Fixed: Use bash instead of cmd
-        run: |
-          export PATH="$QT_PATH:$PATH"
-          ./scripts/build-arch.bat Release x64
-        env:
-          QT_PATH: ${{ runner.workspace }}/Qt/6.10.1/msvc2022_64/bin
-
-      - name: Package MSI
-        shell: bash  # ✅ Fixed: Use bash for consistency
-        run: |
-          ./scripts/generate-bundle.bat Release
-
-      - name: Upload to Release
-        uses: softprops/action-gh-release@v1
+      - name: Download Linux
+        uses: actions/download-artifact@v4
         with:
-          token: ${{ secrets.MAIN_REPO_PAT }}
-          repository: ${{ secrets.MAIN_REPO_NAME }}
-          tag_name: ${{ github.event.inputs.tag || github.event.client_payload.tag }}
-          files: ./build/installer-Release/*.msi
+          name: linux-appimage
+          path: artifacts/
+
+      - name: Upload to Main Repo
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts-${{ github.event.client_payload.tag }}
+          path: artifacts/
