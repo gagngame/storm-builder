@@ -61,7 +61,7 @@ jobs:
           - arch: arm64
             qt_version: 6.10.0
             qt_arch: win64_msvc2022_arm64
-    
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -77,11 +77,13 @@ jobs:
         with:
           version: ${{ matrix.qt_version }}
           arch: ${{ matrix.qt_arch }}
+          # No modules line!
 
       - name: Build Storm (${{ matrix.arch }})
         shell: cmd
         env:
           QT_ROOT: ${{ steps.qt.outputs.qt-path }}
+          CMAKE_PREFIX_PATH: ${{ steps.qt.outputs.qt-path }}
         run: |
           set "PATH=%QT_ROOT%\bin;%PATH%"
           call scripts\build-arch.bat Release ${{ matrix.arch }}
@@ -90,13 +92,12 @@ jobs:
         shell: cmd
         run: |
           cd %GITHUB_WORKSPACE%\installer\squirrel
-          
           set VERSION=${{ github.event.client_payload.tag }}
           if "%VERSION:~0,1%"=="v" set VERSION=%VERSION:~1%
 
           if not exist nupkg mkdir nupkg
           if not exist Releases-${{ matrix.arch }} mkdir Releases-${{ matrix.arch }}
-          
+
           if not exist nuget.exe curl -o nuget.exe https://dist.nuget.org/win-x86-commandline/latest/nuget.exe
 
           if "${{ matrix.arch }}"=="x64" (
