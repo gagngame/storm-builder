@@ -33,7 +33,6 @@ jobs:
           add-tools-to-path: false
           version: ${{ matrix.qt_version }}
           arch: ${{ matrix.arch == 'arm64' && 'win64_msvc2022_arm64_cross_compiled' || 'win64_msvc2022_64' }}
-          # REMOVED: modules: qtquick qtquickcontrols2 qtsvg
 
       - name: Build Storm (${{ matrix.arch }})
         shell: cmd
@@ -101,7 +100,6 @@ jobs:
           host: linux
           target: desktop
           arch: linux_gcc_64
-          # REMOVED: modules: qtquick qtquickcontrols2 qtsvg
 
       - name: Install Dependencies
         run: |
