@@ -2,97 +2,37 @@ name: Build Mule
 on:
   repository_dispatch:
     types: [build-request]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build'
+        required: true
+        default: 'v6.1.26'
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
-    strategy:
-      matrix:
-        include:
-          - arch: x64
-            qt_version: 6.10.1
-          - arch: arm64
-            qt_version: 6.10.0
-    
-    env:
-      BUILD_ROOT: ${{ github.workspace }}
-    
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-        with:
-          submodules: 'recursive'
-          fetch-depth: 1
-
-      # FIXED: Removed non-existent modules, matches working main repo config
-      - name: Install Qt
-        uses: jurplel/install-qt-action@v4
-        with:
-          cache: true
-          set-env: false
-          add-tools-to-path: false
-          version: ${{ matrix.qt_version }}
-          arch: ${{ matrix.arch == 'arm64' && 'win64_msvc2022_arm64_cross_compiled' || 'win64_msvc2022_64' }}
-
-      # FIXED: Added CMAKE_PREFIX_PATH so CMake can find Qt6
-      - name: Build Storm (${{ matrix.arch }})
-        shell: cmd
-        run: |
-          set "PATH=%QT_ROOT%\bin;%PATH%"
-          set "CMAKE_PREFIX_PATH=%QT_ROOT%"
-          scripts\build-arch.bat Release ${{ matrix.arch }}
-        env:
-          QT_ROOT: ${{ runner.workspace }}\Qt\${{ matrix.qt_version }}\${{ matrix.arch == 'arm64' && 'msvc2022_arm64' || 'msvc2022_64' }}
-
-      - name: Package with Squirrel (${{ matrix.arch }})
-        shell: cmd
-        run: |
-          cd %BUILD_ROOT%\installer\squirrel
-
-          set VERSION=${{ github.event.client_payload.tag }}
-
-          if not exist nupkg mkdir nupkg
-          if not exist Releases-${{ matrix.arch }} mkdir Releases-${{ matrix.arch }}
-
-          if "${{ matrix.arch }}"=="x64" (
-            nuget pack Storm.nuspec -BasePath "..\..\build\deploy-x64-release" -OutputDirectory ".\nupkg" -Version %VERSION%
-            ".\Squirrel.Windows-1.9.1\Squirrel.exe" --releasify ".\nupkg\Storm.%VERSION%.nupkg" --releaseDir ".\Releases-x64" --no-msi
-          ) else (
-            nuget pack Storm-arm64.nuspec -BasePath "..\..\build\deploy-arm64-release" -OutputDirectory ".\nupkg" -Version %VERSION%
-            ".\Squirrel.Windows-1.9.1\Squirrel.exe" --releasify ".\nupkg\Storm-arm64.%VERSION%.nupkg" --releaseDir ".\Releases-arm64" --no-msi
-            ren ".\Releases-arm64\Setup.exe" "Setup-arm64.exe"
-          )
-
-      - name: Upload Windows Artifacts (${{ matrix.arch }})
-        uses: actions/upload-artifact@v4
-        with:
-          name: squirrel-${{ matrix.arch }}
-          path: installer/squirrel/Releases-${{ matrix.arch }}/
-
   build-linux:
     runs-on: ubuntu-latest
-    
     steps:
-      - name: Checkout Repository
+      - name: Checkout Private Repo
         uses: actions/checkout@v4
         with:
-          submodules: 'recursive'
-          fetch-depth: 1
+          repository: ${{ secrets.MAIN_REPO_NAME }}
+          token: ${{ secrets.MAIN_REPO_PAT }}
+          ref: ${{ github.event.inputs.tag || github.event.client_payload.tag }}
+          submodules: recursive
 
-      # FIXED: Removed non-existent modules, matches working main repo config
-      - name: Cache APT Packages
-        uses: actions/cache@v4
-        with:
-          path: /var/cache/apt/archives
-          key: apt-${{ runner.os }}-${{ hashFiles('.github/apt-requirements.txt') }}
-          restore-keys: |
-            apt-${{ runner.os }}-
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libgl1-mesa-dev libegl1-mesa-dev libxkbcommon-dev libvulkan-dev libwayland-dev libx11-dev
 
-      - name: Cache linuxdeployqt
-        uses: actions/cache@v4
-        with:
-          path: /usr/local/bin/linuxdeployqt
-          key: linuxdeployqt-${{ runner.os }}-continuous
+      - name: Install linuxdeployqt
+        run: |
+          wget -q -O linuxdeployqt "https://github.com/linuxdeploy/linuxdeployqt/releases/download/continuous/linuxdeployqt-x86_64.AppImage"
+          chmod a+x linuxdeployqt
+          sudo mv linuxdeployqt /usr/local/bin/linuxdeployqt
+          # Explicitly add to GITHUB_PATH to be safe
+          echo "/usr/local/bin" >> $GITHUB_PATH
 
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
@@ -102,57 +42,72 @@ jobs:
           host: linux
           target: desktop
           arch: linux_gcc_64
-
-      - name: Install Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y $(cat .github/apt-requirements.txt | tr '\n' ' ')
-
-      - name: Install linuxdeployqt
-        run: |
-          if [ ! -f /usr/local/bin/linuxdeployqt ]; then
-            wget -q -O linuxdeployqt "https://github.com/linuxdeploy/linuxdeployqt/releases/download/continuous/linuxdeployqt-x86_64.AppImage"
-            chmod a+x linuxdeployqt
-            sudo mv linuxdeployqt /usr/local/bin/linuxdeployqt
-          fi
+          modules: 'qtquick qtquickcontrols2 qtsvg'
+          set-env: true # Ensure Env vars are set
 
       - name: Build AppImage
         run: |
-          export PATH="/opt/qt/6.8.0/gcc_64/bin:$PATH"
+          # IQTA sets IQTA_TOOLS environment variable for tools like linuxdeployqt if installed via it, 
+          # but we installed manually.
+          # It sets QT_ROOT.
+          export PATH="$QT_ROOT/bin:$PATH"
+          
           bash scripts/build-appimage.sh
 
-      - name: Upload AppImage
-        uses: actions/upload-artifact@v4
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v1
         with:
-          name: linux-appimage
-          path: build/installer-release/*.AppImage
-          if-no-files-found: error
+          token: ${{ secrets.MAIN_REPO_PAT }}
+          repository: ${{ secrets.MAIN_REPO_NAME }}
+          tag_name: ${{ github.event.inputs.tag || github.event.client_payload.tag }}
+          files: ./build/installer-release/*.AppImage
 
-  upload-artifacts:
-    needs: [build-windows, build-linux]
-    runs-on: ubuntu-latest
-    
+  build-windows:
+    runs-on: windows-latest
     steps:
-      - name: Download Windows x64
-        uses: actions/download-artifact@v4
+      - name: Checkout Private Repo
+        uses: actions/checkout@v4
         with:
-          name: squirrel-x64
-          path: artifacts/
+          repository: ${{ secrets.MAIN_REPO_NAME }}
+          token: ${{ secrets.MAIN_REPO_PAT }}
+          ref: ${{ github.event.inputs.tag || github.event.client_payload.tag }}
+          submodules: recursive
 
-      - name: Download Windows ARM64
-        uses: actions/download-artifact@v4
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
         with:
-          name: squirrel-arm64
-          path: artifacts/
+          cache: true
+          version: 6.10.1
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          modules: 'qtquick qtquickcontrols2 qtsvg'
+          set-env: true
 
-      - name: Download Linux
-        uses: actions/download-artifact@v4
-        with:
-          name: linux-appimage
-          path: artifacts/
+      - name: Build Storm
+        shell: cmd
+        run: |
+          REM Use IQTA provided environment variable for robustness
+          set "PATH=%IQTA_TOOLS%;%QT_ROOT%\bin;%PATH%"
+          
+          REM Add Qt to CMake prefix
+          set "CMAKE_PREFIX_PATH=%QT_ROOT%"
+          
+          REM Print debug info
+          echo Qt Root is %QT_ROOT%
+          where windeployqt
+          
+          scripts\build-arch.bat Release x64
 
-      - name: Upload to Main Repo
-        uses: actions/upload-artifact@v4
+      - name: Package MSI
+        shell: cmd
+        run: |
+          scripts\generate-bundle.bat Release
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v1
         with:
-          name: release-artifacts-${{ github.event.client_payload.tag }}
-          path: artifacts/
+          token: ${{ secrets.MAIN_REPO_PAT }}
+          repository: ${{ secrets.MAIN_REPO_NAME }}
+          tag_name: ${{ github.event.inputs.tag || github.event.client_payload.tag }}
+          files: ./build/installer-Release/*.msi
