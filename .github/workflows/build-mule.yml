@@ -62,7 +62,7 @@ jobs:
             ren ".\Releases-arm64\Setup.exe" "Setup-arm64.exe"
           )
 
-      - name: Upload Artifacts (${{ matrix.arch }})
+      - name: Upload Windows Artifacts (${{ matrix.arch }})
         uses: actions/upload-artifact@v4
         with:
           name: squirrel-${{ matrix.arch }}
