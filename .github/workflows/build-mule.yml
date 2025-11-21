@@ -7,7 +7,7 @@ jobs:
   build-linux:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           repository: ${{ secrets.MAIN_REPO_NAME }}
@@ -27,6 +27,7 @@ jobs:
           sudo mv linuxdeployqt /usr/local/bin/linuxdeployqt
 
       - name: Install Qt
+        id: qt  # <--- ID IS CRITICAL
         uses: jurplel/install-qt-action@v4
         with:
           version: 6.8.0
@@ -34,13 +35,15 @@ jobs:
           target: desktop
           arch: linux_gcc_64
           modules: 'qtquick qtquickcontrols2 qtsvg'
-          set-env: true
 
       - name: Build AppImage
+        env:
+          QT_PATH: ${{ steps.qt.outputs.qtPath }} # Use Output
         run: |
-          export PATH="$QT_ROOT/bin:$PATH"
-          export CMAKE_PREFIX_PATH="$QT_ROOT"  # <--- CRITICAL FIX
+          export PATH="$QT_PATH/bin:$PATH"
+          export CMAKE_PREFIX_PATH="$QT_PATH"
           
+          echo "Qt Path is: $QT_PATH"
           bash scripts/build-appimage.sh
 
       - name: Upload AppImage
@@ -66,7 +69,7 @@ jobs:
       BUILD_ROOT: ${{ github.workspace }}
     
     steps:
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
         with:
           repository: ${{ secrets.MAIN_REPO_NAME }}
@@ -75,21 +78,23 @@ jobs:
           submodules: recursive
 
       - name: Install Qt
+        id: qt # <--- ID IS CRITICAL
         uses: jurplel/install-qt-action@v4
         with:
           version: ${{ matrix.qt_version }}
           arch: ${{ matrix.qt_arch }}
           modules: 'qtquick qtquickcontrols2 qtsvg'
-          set-env: true
 
       - name: Build Storm (${{ matrix.arch }})
         shell: cmd
         env:
-          CMAKE_PREFIX_PATH: ${{ env.QT_ROOT }}  # <--- CRITICAL FIX
+          QT_PATH: ${{ steps.qt.outputs.qtPath }} # Use Output
+          CMAKE_PREFIX_PATH: ${{ steps.qt.outputs.qtPath }}
         run: |
-          set "PATH=%IQTA_TOOLS%;%QT_ROOT%\bin;%PATH%"
+          echo Qt Path is %QT_PATH%
           
-          echo CMAKE_PREFIX_PATH is %CMAKE_PREFIX_PATH%
+          REM Add Qt bin to PATH manually
+          set "PATH=%QT_PATH%\bin;%PATH%"
           
           call scripts\build-arch.bat Release ${{ matrix.arch }}
 
@@ -98,14 +103,11 @@ jobs:
         run: |
           cd %BUILD_ROOT%\installer\squirrel
           set VERSION=${{ github.event.client_payload.tag }}
-          
-          rem Stripping 'v' from version if present (e.g., v6.1.26 -> 6.1.26)
           if "%VERSION:~0,1%"=="v" set VERSION=%VERSION:~1%
 
           if not exist nupkg mkdir nupkg
           if not exist Releases-${{ matrix.arch }} mkdir Releases-${{ matrix.arch }}
-
-          rem Install Nuget (if not present)
+          
           if not exist nuget.exe curl -o nuget.exe https://dist.nuget.org/win-x86-commandline/latest/nuget.exe
 
           if "${{ matrix.arch }}"=="x64" (
@@ -117,7 +119,7 @@ jobs:
             ren ".\Releases-arm64\Setup.exe" "Setup-arm64.exe"
           )
 
-      - name: Upload Windows Artifacts (${{ matrix.arch }})
+      - name: Upload Windows Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: squirrel-${{ matrix.arch }}
