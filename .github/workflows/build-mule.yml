@@ -24,7 +24,7 @@ jobs:
           submodules: 'recursive'
           fetch-depth: 1
 
-      # EXACT COPY from working build-windows-squirrel.yml.disabled
+      # EXACT COPY - NO MODULES
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
@@ -47,7 +47,6 @@ jobs:
         run: |
           cd %BUILD_ROOT%\installer\squirrel
 
-          REM Use tag from main repo trigger
           set VERSION=${{ github.event.client_payload.tag }}
 
           if not exist nupkg mkdir nupkg
@@ -78,7 +77,7 @@ jobs:
           submodules: 'recursive'
           fetch-depth: 1
 
-      # EXACT COPY from working build-appimage.yml.disabled  
+      # EXACT COPY - NO MODULES
       - name: Cache APT Packages
         uses: actions/cache@v4
         with:
