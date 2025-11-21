@@ -28,10 +28,10 @@ jobs:
           add-tools-to-path: false
           version: ${{ matrix.qt_version }}
           arch: ${{ matrix.arch == 'arm64' && 'win64_msvc2022_arm64_cross_compiled' || 'win64_msvc2022_64' }}
-          modules: 'qtquick qtquickcontrols2 qtsvg'  # ← ADD MODULES
+          # REMOVED: modules: qtquick qtquickcontrols2 qtsvg (these don't exist)
 
       - name: Build Storm
-        shell: bash  # ← CHANGED FROM cmd TO bash
+        shell: bash
         run: |
           # EXPLICITLY ADD QT BIN TO PATH (like working version)
           export PATH="${{ runner.workspace }}/Qt/${{ matrix.qt_version }}/${{ matrix.arch == 'arm64' && 'msvc2022_arm64' || 'msvc2022_64' }}/bin:$PATH"
@@ -40,6 +40,32 @@ jobs:
           ls "${{ runner.workspace }}/Qt/${{ matrix.qt_version }}/${{ matrix.arch == 'arm64' && 'msvc2022_arm64' || 'msvc2022_64' }}/bin/windeployqt.exe"
           
           ./scripts/build-arch.bat Release ${{ matrix.arch }}
+
+      - name: Package with Squirrel (${{ matrix.arch }})
+        shell: cmd
+        run: |
+          cd %BUILD_ROOT%\installer\squirrel
+
+          REM Follow moonlight-qt: use passed release_version (from version.txt)
+          set VERSION=${{ github.event.client_payload.tag }}
+
+          if not exist nupkg mkdir nupkg
+          if not exist Releases-${{ matrix.arch }} mkdir Releases-${{ matrix.arch }}
+
+          if "${{ matrix.arch }}"=="x64" (
+            nuget pack Storm.nuspec -BasePath "..\..\build\deploy-x64-release" -OutputDirectory ".\nupkg" -Version %VERSION%
+            ".\Squirrel.Windows-1.9.1\Squirrel.exe" --releasify ".\nupkg\Storm.%VERSION%.nupkg" --releaseDir ".\Releases-x64" --no-msi
+          ) else (
+            nuget pack Storm-arm64.nuspec -BasePath "..\..\build\deploy-arm64-release" -OutputDirectory ".\nupkg" -Version %VERSION%
+            ".\Squirrel.Windows-1.9.1\Squirrel.exe" --releasify ".\nupkg\Storm-arm64.%VERSION%.nupkg" --releaseDir ".\Releases-arm64" --no-msi
+            ren ".\Releases-arm64\Setup.exe" "Setup-arm64.exe"
+          )
+
+      - name: Upload Windows Artifacts (${{ matrix.arch }})
+        uses: actions/upload-artifact@v4
+        with:
+          name: squirrel-${{ matrix.arch }}
+          path: installer/squirrel/Releases-${{ matrix.arch }}/
 
   build-linux:
     runs-on: ubuntu-latest
@@ -72,7 +98,7 @@ jobs:
           host: linux
           target: desktop
           arch: linux_gcc_64
-          modules: 'qtquick qtquickcontrols2 qtsvg'  # ← ADD MODULES (CRITICAL FIX)
+          # REMOVED: modules: qtquick qtquickcontrols2 qtsvg (these don't exist)
 
       - name: Install Dependencies
         run: |
@@ -97,6 +123,12 @@ jobs:
           which linuxdeployqt
           
           bash scripts/build-appimage.sh
+
+      - name: Upload Linux Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-appimage
+          path: build/installer-release/*.AppImage
 
   upload-artifacts:
     needs: [build-windows, build-linux]
