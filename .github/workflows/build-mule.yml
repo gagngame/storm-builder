@@ -80,14 +80,13 @@ jobs:
         shell: cmd
         run: |
           scripts\generate-bundle.bat Release
-
       - name: Upload to Release
         uses: softprops/action-gh-release@v1
         with:
           token: ${{ secrets.MAIN_REPO_PAT }}
           repository: ${{ secrets.MAIN_REPO_NAME }}
           tag_name: ${{ github.event.client_payload.tag }}
-          files: ./build/installer-Release/*.msi
+          files: ./build/installer-Release/*.exe
 
   build-linux:
     runs-on: ubuntu-22.04
@@ -109,7 +108,6 @@ jobs:
           key: apt-${{ runner.os }}-${{ hashFiles('.github/apt-requirements.txt') }}
           restore-keys: |
             apt-${{ runner.os }}-
-
       - name: Cache linuxdeployqt
         uses: actions/cache@v4
         with:
@@ -129,7 +127,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y $(cat .github/apt-requirements.txt | tr '\n' ' ')
-
       - name: Install linuxdeployqt
         run: |
           if [ ! -f /usr/local/bin/linuxdeployqt ]; then
@@ -137,12 +134,10 @@ jobs:
             chmod a+x linuxdeployqt
             sudo mv linuxdeployqt /usr/local/bin/linuxdeployqt
           fi
-
       - name: Build AppImage
         run: |
           export PATH="/opt/qt/6.8.0/gcc_64/bin:$PATH"
           bash scripts/build-appimage.sh
-
       - name: Upload to Release
         uses: softprops/action-gh-release@v1
         with:
