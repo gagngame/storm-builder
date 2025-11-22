@@ -5,7 +5,7 @@ on:
 
 jobs:
   build-linux:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     
     steps:
       - name: Checkout Private Repo
@@ -67,7 +67,7 @@ jobs:
           files: ./build/installer-release/*.AppImage
 
   build-windows:
-    runs-on: windows-latest  # Changed from windows-2025, but should still work
+    runs-on: windows-2025  # ← EXACT runner from working commit
     strategy:
       matrix:
         include:
@@ -89,16 +89,17 @@ jobs:
           submodules: 'recursive'
           fetch-depth: 1
 
-      # EXACT COPY of working Qt installation from original commit
+      # ← EXACT Qt installation from working commit
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
           cache: true
-          set-env: false          # ← CRITICAL: Same as original working config
-          add-tools-to-path: false # ← CRITICAL: Same as original working config
+          set-env: false
+          add-tools-to-path: false
           version: ${{ matrix.qt_version }}
           arch: ${{ matrix.arch == 'arm64' && 'win64_msvc2022_arm64_cross_compiled' || 'win64_msvc2022_64' }}
 
+      # ← EXACT build step from working commit
       - name: Build Storm (${{ matrix.arch }})
         shell: cmd
         run: |
@@ -107,6 +108,7 @@ jobs:
         env:
           QT_PATH: ${{ runner.workspace }}\Qt\${{ matrix.qt_version }}\${{ matrix.arch == 'arm64' && 'msvc2022_arm64' || 'msvc2022_64' }}\bin
 
+      # ← EXACT packaging from working commit
       - name: Package MSI
         shell: cmd
         run: |
@@ -121,7 +123,7 @@ jobs:
           files: ./build/installer-Release/*.msi
 
   build-macos:
-    runs-on: macos-latest
+    runs-on: macos-latest  # Changed from macos-15 (not available on public runners)
     
     steps:
       - name: Checkout Private Repo
@@ -143,7 +145,7 @@ jobs:
         with:
           cache: true
           version: 6.8.0
-          host: mac
+          host: macos
           target: desktop
           arch: clang_64
 
