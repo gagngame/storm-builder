@@ -11,11 +11,10 @@ jobs:
         include:
           - arch: x64
             qt_version: 6.10.1
+            qt_arch: win64_msvc2022_64
           - arch: arm64
             qt_version: 6.10.0
-
-    env:
-      BUILD_ROOT: ${{ github.workspace }}
+            qt_arch: win64_msvc2022_arm64
 
     steps:
       - name: Checkout Private Repo
@@ -27,37 +26,36 @@ jobs:
           submodules: 'recursive'
 
       - name: Install Qt
+        id: qt
         uses: jurplel/install-qt-action@v4
         with:
           cache: true
-          set-env: false
-          add-tools-to-path: false
           version: ${{ matrix.qt_version }}
-          arch: ${{ matrix.arch == 'arm64' && 'win64_msvc2022_arm64_cross_compiled' || 'win64_msvc2022_64' }}
+          arch: ${{ matrix.qt_arch }}
+          # No modules (Qt 6 desktop includes everything you need)
 
       - name: Build Storm (${{ matrix.arch }})
         shell: cmd
-        run: |
-          set "PATH=%QT_PATH%;%PATH%"
-          scripts\build-arch.bat Release ${{ matrix.arch }}
         env:
-          QT_PATH: ${{ runner.workspace }}\Qt\${{ matrix.qt_version }}\${{ matrix.arch == 'arm64' && 'msvc2022_arm64' || 'msvc2022_64' }}\bin
+          QT_ROOT: ${{ steps.qt.outputs.qt-path }}
+          CMAKE_PREFIX_PATH: ${{ steps.qt.outputs.qt-path }}
+        run: |
+          set "PATH=%QT_ROOT%\bin;%PATH%"
+          call scripts\build-arch.bat Release ${{ matrix.arch }}
 
       - name: Package with Squirrel (${{ matrix.arch }})
         shell: cmd
+        working-directory: installer/squirrel
         run: |
-          cd installer/squirrel
-          
-          REM Extract version from tag
           set "VERSION=${{ github.event.client_payload.tag }}"
-          set "VERSION=%VERSION:~1%"
-          
+          if "%VERSION:~0,1%"=="v" set "VERSION=%VERSION:~1%"
+
           echo Creating directories...
           if not exist nupkg mkdir nupkg
           if not exist Releases-${{ matrix.arch }} mkdir Releases-${{ matrix.arch }}
-          
+
           echo Version: %VERSION%
-          
+
           if "${{ matrix.arch }}"=="x64" (
             echo Building x64 package...
             nuget.exe pack Storm.nuspec -BasePath "%GITHUB_WORKSPACE%\build\deploy-x64-release" -OutputDirectory nupkg -Version %VERSION%
@@ -66,7 +64,7 @@ jobs:
               exit /b 1
             )
             echo Running Squirrel for x64...
-            "Squirrel.Windows-1.9.1\Squirrel.exe" --releasify "nupkg\Storm.%VERSION%.nupkg" --releaseDir "Releases-x64" --no-msi
+            Squirrel.Windows-1.9.1\Squirrel.exe --releasify "nupkg\Storm.%VERSION%.nupkg" --releaseDir "Releases-x64" --no-msi
             if %ERRORLEVEL% neq 0 (
               echo Squirrel failed for x64
               exit /b 1
@@ -79,14 +77,14 @@ jobs:
               exit /b 1
             )
             echo Running Squirrel for ARM64...
-            "Squirrel.Windows-1.9.1\Squirrel.exe" --releasify "nupkg\Storm-arm64.%VERSION%.nupkg" --releaseDir "Releases-arm64" --no-msi
+            Squirrel.Windows-1.9.1\Squirrel.exe --releasify "nupkg\Storm-arm64.%VERSION%.nupkg" --releaseDir "Releases-arm64" --no-msi
             if %ERRORLEVEL% neq 0 (
               echo Squirrel failed for ARM64
               exit /b 1
             )
             ren "Releases-arm64\Setup.exe" "Setup-arm64.exe"
           )
-          
+
           echo Squirrel packaging completed successfully
 
       - name: Upload to Release (${{ matrix.arch }})
@@ -102,7 +100,6 @@ jobs:
 
   build-linux:
     runs-on: ubuntu-22.04
-    
     steps:
       - name: Checkout Private Repo
         uses: actions/checkout@v4
@@ -127,6 +124,7 @@ jobs:
           key: linuxdeployqt-${{ runner.os }}-continuous
 
       - name: Install Qt
+        id: qt
         uses: jurplel/install-qt-action@v4
         with:
           cache: true
@@ -142,16 +140,20 @@ jobs:
 
       - name: Install linuxdeployqt
         run: |
-          wget -q -O linuxdeployqt "https://github.com/linuxdeploy/linuxdeployqt/releases/download/continuous/linuxdeployqt-x86_64.AppImage"
-          chmod a+x linuxdeployqt
-          sudo mv linuxdeployqt /usr/local/bin/linuxdeployqt
+          if ! [ -f /usr/local/bin/linuxdeployqt ]; then
+            wget -q -O linuxdeployqt "https://github.com/linuxdeploy/linuxdeployqt/releases/download/continuous/linuxdeployqt-x86_64.AppImage"
+            chmod a+x linuxdeployqt
+            sudo mv linuxdeployqt /usr/local/bin/linuxdeployqt
+          fi
 
       - name: Build AppImage
+        env:
+          QT_ROOT: ${{ steps.qt.outputs.qt-path }}
         run: |
           export PATH="/usr/local/bin:$PATH"
-          echo "Testing linuxdeployqt..."
+          export PATH="$QT_ROOT/bin:$PATH"
+          export CMAKE_PREFIX_PATH="$QT_ROOT"
           linuxdeployqt --version
-          echo "Running build script..."
           bash scripts/build-appimage.sh
 
       - name: Upload to Release
