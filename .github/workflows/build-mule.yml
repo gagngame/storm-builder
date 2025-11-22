@@ -4,6 +4,91 @@ on:
     types: [build-request]
 
 jobs:
+  build-windows:
+    runs-on: windows-2025
+    strategy:
+      matrix:
+        include:
+          - arch: x64
+            qt_version: 6.10.1
+          - arch: arm64
+            qt_version: 6.10.0
+    
+    env:
+      BUILD_ROOT: ${{ github.workspace }}
+    
+    steps:
+      - name: Checkout Private Repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.MAIN_REPO_NAME }}
+          token: ${{ secrets.MAIN_REPO_PAT }}
+          ref: ${{ github.event.client_payload.tag }}
+          submodules: 'recursive'
+          fetch-depth: 1
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          cache: true
+          set-env: false
+          add-tools-to-path: false
+          version: ${{ matrix.qt_version }}
+          arch: ${{ matrix.arch == 'arm64' && 'win64_msvc2022_arm64_cross_compiled' || 'win64_msvc2022_64' }}
+
+      - name: Build Storm (${{ matrix.arch }})
+        shell: cmd
+        run: |
+          set "PATH=%QT_PATH%;%PATH%"
+          scripts\build-arch.bat Release ${{ matrix.arch }}
+        env:
+          QT_PATH: ${{ runner.workspace }}\Qt\${{ matrix.qt_version }}\${{ matrix.arch == 'arm64' && 'msvc2022_arm64' || 'msvc2022_64' }}\bin
+
+      - name: Upload Build Artifacts (${{ matrix.arch }})
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build-${{ matrix.arch }}
+          path: build/
+
+  package-windows:
+    needs: build-windows
+    runs-on: windows-2025
+    
+    steps:
+      - name: Checkout Private Repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.MAIN_REPO_NAME }}
+          token: ${{ secrets.MAIN_REPO_PAT }}
+          ref: ${{ github.event.client_payload.tag }}
+          submodules: 'recursive'
+          fetch-depth: 1
+
+      - name: Download x64 Build
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-build-x64
+          path: build/
+
+      - name: Download ARM64 Build
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-build-arm64
+          path: build/
+
+      - name: Package MSI
+        shell: cmd
+        run: |
+          scripts\generate-bundle.bat Release
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v1
+        with:
+          token: ${{ secrets.MAIN_REPO_PAT }}
+          repository: ${{ secrets.MAIN_REPO_NAME }}
+          tag_name: ${{ github.event.client_payload.tag }}
+          files: ./build/installer-Release/*.msi
+
   build-linux:
     runs-on: ubuntu-22.04
     
@@ -65,56 +150,3 @@ jobs:
           repository: ${{ secrets.MAIN_REPO_NAME }}
           tag_name: ${{ github.event.client_payload.tag }}
           files: ./build/installer-release/*.AppImage
-
-  build-windows:
-    runs-on: windows-2025
-    strategy:
-      matrix:
-        include:
-          - arch: x64
-            qt_version: 6.10.1
-          - arch: arm64
-            qt_version: 6.10.0
-    
-    env:
-      BUILD_ROOT: ${{ github.workspace }}
-    
-    steps:
-      - name: Checkout Private Repo
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ secrets.MAIN_REPO_NAME }}
-          token: ${{ secrets.MAIN_REPO_PAT }}
-          ref: ${{ github.event.client_payload.tag }}
-          submodules: 'recursive'
-          fetch-depth: 1
-
-      - name: Install Qt
-        uses: jurplel/install-qt-action@v4
-        with:
-          cache: true
-          set-env: false
-          add-tools-to-path: false
-          version: ${{ matrix.qt_version }}
-          arch: ${{ matrix.arch == 'arm64' && 'win64_msvc2022_arm64_cross_compiled' || 'win64_msvc2022_64' }}
-
-      - name: Build Storm (${{ matrix.arch }})
-        shell: cmd
-        run: |
-          set "PATH=%QT_PATH%;%PATH%"
-          scripts\build-arch.bat Release ${{ matrix.arch }}
-        env:
-          QT_PATH: ${{ runner.workspace }}\Qt\${{ matrix.qt_version }}\${{ matrix.arch == 'arm64' && 'msvc2022_arm64' || 'msvc2022_64' }}\bin
-
-      - name: Package MSI
-        shell: cmd
-        run: |
-          scripts\generate-bundle.bat Release
-
-      - name: Upload to Release
-        uses: softprops/action-gh-release@v1
-        with:
-          token: ${{ secrets.MAIN_REPO_PAT }}
-          repository: ${{ secrets.MAIN_REPO_NAME }}
-          tag_name: ${{ github.event.client_payload.tag }}
-          files: ./build/installer-Release/*.msi
