@@ -1,0 +1,80 @@
+name: Build Mule - Windows Squirrel
+permissions:
+  contents: write
+
+on:
+  repository_dispatch:
+    types: [build-request]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        include:
+          - arch: x64
+            qt_version: 6.10.1
+          - arch: arm64
+            qt_version: 6.10.0
+    
+    env:
+      BUILD_ROOT: ${{ github.workspace }}
+    
+    steps:
+      - name: Checkout Private Repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.MAIN_REPO_NAME }}
+          token: ${{ secrets.MAIN_REPO_PAT }}
+          ref: ${{ github.event.client_payload.tag }}
+          submodules: 'recursive'
+          fetch-depth: 1
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          cache: true
+          set-env: false
+          add-tools-to-path: false
+          version: ${{ matrix.qt_version }}
+          arch: ${{ matrix.arch == 'arm64' && 'win64_msvc2022_arm64_cross_compiled' || 'win64_msvc2022_64' }}
+
+      - name: Build Storm (${{ matrix.arch }})
+        shell: cmd
+        run: |
+          set "PATH=%QT_PATH%;%PATH%"
+          scripts\build-arch.bat Release ${{ matrix.arch }}
+        env:
+          QT_PATH: ${{ runner.workspace }}\Qt\${{ matrix.qt_version }}\${{ matrix.arch == 'arm64' && 'msvc2022_arm64' || 'msvc2022_64' }}\bin
+
+      - name: Package with Squirrel (${{ matrix.arch }})
+        shell: cmd
+        run: |
+          cd %BUILD_ROOT%\installer\squirrel
+          
+          REM Extract version from tag (remove 'v' prefix)
+          set TAG=${{ github.event.client_payload.tag }}
+          set VERSION=%TAG:v=%
+          
+          if not exist nupkg mkdir nupkg
+          if not exist Releases-${{ matrix.arch }} mkdir Releases-${{ matrix.arch }}
+          
+          if "${{ matrix.arch }}"=="x64" (
+            nuget pack Storm.nuspec -BasePath "..\..\build\deploy-x64-release" -OutputDirectory ".\nupkg" -Version %VERSION%
+            ".\Squirrel.Windows-1.9.1\Squirrel.exe" --releasify ".\nupkg\Storm.%VERSION%.nupkg" --releaseDir ".\Releases-x64" --no-msi
+          ) else (
+            nuget pack Storm-arm64.nuspec -BasePath "..\..\build\deploy-arm64-release" -OutputDirectory ".\nupkg" -Version %VERSION%
+            ".\Squirrel.Windows-1.9.1\Squirrel.exe" --releasify ".\nupkg\Storm-arm64.%VERSION%.nupkg" --releaseDir ".\Releases-arm64" --no-msi
+            ren ".\Releases-arm64\Setup.exe" "Setup-arm64.exe"
+          )
+
+      - name: Upload to Release (${{ matrix.arch }})
+        uses: softprops/action-gh-release@v1
+        with:
+          token: ${{ secrets.MAIN_REPO_PAT }}
+          repository: ${{ secrets.MAIN_REPO_NAME }}
+          tag_name: ${{ github.event.client_payload.tag }}
+          files: |
+            ./installer/squirrel/Releases-${{ matrix.arch }}/Setup${{ matrix.arch == 'arm64' && '-arm64' || '' }}.exe
+            ./installer/squirrel/Releases-${{ matrix.arch }}/RELEASES
+            ./installer/squirrel/Releases-${{ matrix.arch }}/Storm${{ matrix.arch == 'arm64' && '-arm64' || '' }}*.nupkg
