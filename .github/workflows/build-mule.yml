@@ -48,15 +48,21 @@ jobs:
         shell: cmd
         run: |
           cd %BUILD_ROOT%\installer\squirrel
-          for /f "tokens=1,* delims=v" %%a in ("${{ github.event.client_payload.tag }}") do set VERSION=%%b
+
+          REM Extract version from tag (remove 'v' prefix)
+          set TAG=${{ github.event.client_payload.tag }}
+          set VERSION=%TAG:v=%
+          echo Packaging version: %VERSION%
 
           if not exist nupkg mkdir nupkg
           if not exist Releases-${{ matrix.arch }} mkdir Releases-${{ matrix.arch }}
 
           if "${{ matrix.arch }}"=="x64" (
+            echo Creating x64 package...
             nuget pack Storm.nuspec -BasePath "..\..\build\deploy-x64-release" -OutputDirectory ".\nupkg" -Version %VERSION%
             ".\Squirrel.Windows-1.9.1\Squirrel.exe" --releasify ".\nupkg\Storm.%VERSION%.nupkg" --releaseDir ".\Releases-x64" --no-msi
           ) else (
+            echo Creating ARM64 package...
             nuget pack Storm-arm64.nuspec -BasePath "..\..\build\deploy-arm64-release" -OutputDirectory ".\nupkg" -Version %VERSION%
             ".\Squirrel.Windows-1.9.1\Squirrel.exe" --releasify ".\nupkg\Storm-arm64.%VERSION%.nupkg" --releaseDir ".\Releases-arm64" --no-msi
             ren ".\Releases-arm64\Setup.exe" "Setup-arm64.exe"
@@ -117,12 +123,12 @@ jobs:
           wget -q -O linuxdeployqt "https://github.com/linuxdeploy/linuxdeployqt/releases/download/continuous/linuxdeployqt-x86_64.AppImage"
           chmod a+x linuxdeployqt
           sudo mv linuxdeployqt /usr/local/bin/linuxdeployqt
-          # Ensure it's executable and in PATH
-          export PATH="/usr/local/bin:$PATH"
-          linuxdeployqt --version
+          # Test that it's working
+          /usr/local/bin/linuxdeployqt --version || echo "linuxdeployqt version check failed"
       - name: Build AppImage
         run: |
-          export PATH="/opt/qt/6.8.0/gcc_64/bin:$PATH"
+          export PATH="/opt/qt/6.8.0/gcc_64/bin:/usr/local/bin:$PATH"
+          which linuxdeployqt || echo "linuxdeployqt not found in PATH"
           bash scripts/build-appimage.sh
       - name: Upload to Release
         uses: softprops/action-gh-release@v1
