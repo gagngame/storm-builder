@@ -1,0 +1,91 @@
+name: Build - Mule Local Only
+
+on:
+  workflow_dispatch:    # Manual trigger
+  # Adjust triggers as needed
+
+jobs:
+  build-windows:
+    runs-on: windows-2025
+    strategy:
+      matrix:
+        include:
+          - arch: x64
+            qt_version: 6.10.1
+          - arch: arm64
+            qt_version: 6.10.0
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          cache: true
+          set-env: false
+          version: ${{ matrix.qt_version }}
+          arch: ${{ matrix.arch == 'arm64' && 'win64_msvc2022_arm64_cross_compiled' || 'win64_msvc2022_64' }}
+
+      - name: Build Storm (${{ matrix.arch }})
+        shell: cmd
+        env:
+          QT_PATH: ${{ runner.workspace }}\Qt\${{ matrix.qt_version }}\${{ matrix.arch == 'arm64' && 'msvc2022_arm64' || 'msvc2022_64' }}\bin
+        run: |
+          set "PATH=%QT_PATH%;%PATH%"
+          scripts\build-arch.bat Release ${{ matrix.arch }}
+
+      - name: Package MSI (${{ matrix.arch }})
+        shell: cmd
+        run: |
+          scripts\generate-bundle.bat Release
+
+      - name: Copy final artifacts to local Mule disk
+        shell: cmd
+        run: |
+          if not exist D:\mule-releases mkdir D:\mule-releases
+          xcopy /Y /S build\installer-release\* D:\mule-releases\
+          REM For Squirrel, also: xcopy /Y /S installer\squirrel\Releases-${{ matrix.arch }}\* D:\mule-releases\
+
+  build-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'
+          fetch-depth: 1
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          cache: true
+          version: 6.8.0
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1-mesa-dev libgl1-mesa-dev [add the rest...]
+
+      - name: Install linuxdeployqt
+        run: |
+          if [ ! -f tools/linuxdeployqt ]; then
+            wget -q -O tools/linuxdeployqt "https://github.com/linuxdeploy/linuxdeployqt/releases/download/continuous/linuxdeployqt-x86_64.AppImage"
+            chmod a+x tools/linuxdeployqt
+          fi
+
+      - name: Build AppImage
+        run: |
+          export PATH="tools:$PATH"
+          bash scripts/build-appimage.sh
+
+      - name: Copy final AppImage to local Mule disk
+        run: |
+          mkdir -p /mnt/mule-releases
+          cp build/installer-release/*.AppImage /mnt/mule-releases/
