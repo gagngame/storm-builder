@@ -6,50 +6,65 @@ on:
 jobs:
   build-linux:
     runs-on: ubuntu-latest
+    
     steps:
-      - name: Checkout
+      - name: Checkout Private Repo
         uses: actions/checkout@v4
         with:
           repository: ${{ secrets.MAIN_REPO_NAME }}
           token: ${{ secrets.MAIN_REPO_PAT }}
           ref: ${{ github.event.client_payload.tag }}
-          submodules: recursive
+          submodules: 'recursive'
+          fetch-depth: 1
 
-      - name: Install Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential libgl1-mesa-dev libegl1-mesa-dev libxkbcommon-dev libvulkan-dev libwayland-dev libx11-dev
+      - name: Cache APT Packages
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: apt-${{ runner.os }}-${{ hashFiles('.github/apt-requirements.txt') }}
+          restore-keys: |
+            apt-${{ runner.os }}-
 
-      - name: Install linuxdeployqt
-        run: |
-          wget -q -O linuxdeployqt "https://github.com/probonopd/linuxdeployqt/releases/download/continuous/linuxdeployqt-continuous-x86_64.AppImage"
-          chmod a+x linuxdeployqt
-          sudo mv linuxdeployqt /usr/local/bin/linuxdeployqt
+      - name: Cache linuxdeployqt
+        uses: actions/cache@v4
+        with:
+          path: /usr/local/bin/linuxdeployqt
+          key: linuxdeployqt-${{ runner.os }}-continuous
 
       - name: Install Qt
-        id: qt
         uses: jurplel/install-qt-action@v4
         with:
+          cache: true
           version: 6.8.0
           host: linux
           target: desktop
           arch: linux_gcc_64
-          # No modules line!
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y $(cat .github/apt-requirements.txt | tr '\n' ' ')
+
+      - name: Install linuxdeployqt
+        run: |
+          if [ ! -f /usr/local/bin/linuxdeployqt ]; then
+            wget -q -O linuxdeployqt "https://github.com/linuxdeploy/linuxdeployqt/releases/download/continuous/linuxdeployqt-x86_64.AppImage"
+            chmod a+x linuxdeployqt
+            sudo mv linuxdeployqt /usr/local/bin/linuxdeployqt
+          fi
 
       - name: Build AppImage
-        env:
-          QT_ROOT: ${{ steps.qt.outputs.qt-path }}
         run: |
-          export PATH="$QT_ROOT/bin:$PATH"
-          export CMAKE_PREFIX_PATH="$QT_ROOT"
+          export PATH="/opt/qt/6.8.0/gcc_64/bin:$PATH"
           bash scripts/build-appimage.sh
 
-      - name: Upload AppImage
-        uses: actions/upload-artifact@v4
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v1
         with:
-          name: linux-appimage
-          path: build/installer-release/*.AppImage
-          if-no-files-found: error
+          token: ${{ secrets.MAIN_REPO_PAT }}
+          repository: ${{ secrets.MAIN_REPO_NAME }}
+          tag_name: ${{ github.event.client_payload.tag }}
+          files: ./build/installer-release/*.AppImage
 
   build-windows:
     runs-on: windows-latest
@@ -58,87 +73,88 @@ jobs:
         include:
           - arch: x64
             qt_version: 6.10.1
-            qt_arch: win64_msvc2022_64
           - arch: arm64
             qt_version: 6.10.0
-            qt_arch: win64_msvc2022_arm64
-
+    
+    env:
+      BUILD_ROOT: ${{ github.workspace }}
+    
     steps:
-      - name: Checkout
+      - name: Checkout Private Repo
         uses: actions/checkout@v4
         with:
           repository: ${{ secrets.MAIN_REPO_NAME }}
           token: ${{ secrets.MAIN_REPO_PAT }}
           ref: ${{ github.event.client_payload.tag }}
-          submodules: recursive
+          submodules: 'recursive'
+          fetch-depth: 1
 
       - name: Install Qt
-        id: qt
         uses: jurplel/install-qt-action@v4
         with:
+          cache: true
+          set-env: false
+          add-tools-to-path: false
           version: ${{ matrix.qt_version }}
-          arch: ${{ matrix.qt_arch }}
-          # No modules line!
+          arch: ${{ matrix.arch == 'arm64' && 'win64_msvc2022_arm64_cross_compiled' || 'win64_msvc2022_64' }}
 
       - name: Build Storm (${{ matrix.arch }})
         shell: cmd
-        env:
-          QT_ROOT: ${{ steps.qt.outputs.qt-path }}
-          CMAKE_PREFIX_PATH: ${{ steps.qt.outputs.qt-path }}
         run: |
-          set "PATH=%QT_ROOT%\bin;%PATH%"
-          call scripts\build-arch.bat Release ${{ matrix.arch }}
+          set "PATH=%QT_PATH%;%PATH%"
+          scripts\build-arch.bat Release ${{ matrix.arch }}
+        env:
+          QT_PATH: ${{ runner.workspace }}\Qt\${{ matrix.qt_version }}\${{ matrix.arch == 'arm64' && 'msvc2022_arm64' || 'msvc2022_64' }}\bin
 
-      - name: Package with Squirrel (${{ matrix.arch }})
+      - name: Package MSI
         shell: cmd
         run: |
-          cd %GITHUB_WORKSPACE%\installer\squirrel
-          set VERSION=${{ github.event.client_payload.tag }}
-          if "%VERSION:~0,1%"=="v" set VERSION=%VERSION:~1%
+          scripts\generate-bundle.bat Release
 
-          if not exist nupkg mkdir nupkg
-          if not exist Releases-${{ matrix.arch }} mkdir Releases-${{ matrix.arch }}
-
-          if not exist nuget.exe curl -o nuget.exe https://dist.nuget.org/win-x86-commandline/latest/nuget.exe
-
-          if "${{ matrix.arch }}"=="x64" (
-            nuget pack Storm.nuspec -BasePath "..\..\build\deploy-x64-release" -OutputDirectory ".\nupkg" -Version %VERSION%
-            ".\Squirrel.Windows-1.9.1\Squirrel.exe" --releasify ".\nupkg\Storm.%VERSION%.nupkg" --releaseDir ".\Releases-x64" --no-msi
-          ) else (
-            nuget pack Storm-arm64.nuspec -BasePath "..\..\build\deploy-arm64-release" -OutputDirectory ".\nupkg" -Version %VERSION%
-            ".\Squirrel.Windows-1.9.1\Squirrel.exe" --releasify ".\nupkg\Storm-arm64.%VERSION%.nupkg" --releaseDir ".\Releases-arm64" --no-msi
-            ren ".\Releases-arm64\Setup.exe" "Setup-arm64.exe"
-          )
-
-      - name: Upload Windows Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: squirrel-${{ matrix.arch }}
-          path: installer/squirrel/Releases-${{ matrix.arch }}/
-
-  upload-artifacts:
-    needs: [build-windows, build-linux]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download Windows x64
-        uses: actions/download-artifact@v4
-        with:
-          name: squirrel-x64
-          path: artifacts/
-      - name: Download Windows ARM64
-        uses: actions/download-artifact@v4
-        with:
-          name: squirrel-arm64
-          path: artifacts/
-      - name: Download Linux
-        uses: actions/download-artifact@v4
-        with:
-          name: linux-appimage
-          path: artifacts/
-      - name: Upload to Main Repo Release
+      - name: Upload to Release
         uses: softprops/action-gh-release@v1
         with:
           token: ${{ secrets.MAIN_REPO_PAT }}
           repository: ${{ secrets.MAIN_REPO_NAME }}
           tag_name: ${{ github.event.client_payload.tag }}
-          files: artifacts/**/*
+          files: ./build/installer-Release/*.msi
+
+  build-macos:
+    runs-on: macos-latest
+    
+    steps:
+      - name: Checkout Private Repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.MAIN_REPO_NAME }}
+          token: ${{ secrets.MAIN_REPO_PAT }}
+          ref: ${{ github.event.client_payload.tag }}
+          submodules: 'recursive'
+          fetch-depth: 1
+
+      - name: Install create-dmg
+        run: |
+          brew install node
+          npm install --global create-dmg
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          cache: true
+          version: 6.8.0
+          host: mac
+          target: desktop
+          arch: clang_64
+
+      - name: Build DMG
+        run: |
+          export PATH="/opt/qt/6.8.0/clang_64/bin:$PATH"
+          bash scripts/generate-dmg.sh Release
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v1
+        with:
+          token: ${{ secrets.MAIN_REPO_PAT }}
+          repository: ${{ secrets.MAIN_REPO_NAME }}
+          tag_name: ${{ github.event.client_payload.tag }}
+          files: ./build/installer-Release/*.dmg
