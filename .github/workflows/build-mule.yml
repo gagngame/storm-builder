@@ -5,30 +5,27 @@ on:
 
 jobs:
   build-windows:
-    runs-on: windows-2025  # ← EXACT runner from working commit
+    runs-on: windows-2025
     strategy:
       matrix:
         include:
-          # ← EXACT configuration from working commit
           - arch: x64
             qt_version: 6.10.1
           - arch: arm64
             qt_version: 6.10.0
 
     env:
-      BUILD_ROOT: ${{ github.workspace }}  # ← EXACT env from working commit
+      BUILD_ROOT: ${{ github.workspace }}
 
     steps:
-      - name: Checkout Private Repo  # ← CHANGED for mule
+      - name: Checkout Private Repo
         uses: actions/checkout@v4
         with:
           repository: ${{ secrets.MAIN_REPO_NAME }}
           token: ${{ secrets.MAIN_REPO_PAT }}
           ref: ${{ github.event.client_payload.tag }}
           submodules: 'recursive'
-          fetch-depth: 1
 
-      # ← EXACT Qt installation from working commit
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
@@ -38,7 +35,6 @@ jobs:
           version: ${{ matrix.qt_version }}
           arch: ${{ matrix.arch == 'arm64' && 'win64_msvc2022_arm64_cross_compiled' || 'win64_msvc2022_64' }}
 
-      # ← EXACT build step from working commit
       - name: Build Storm (${{ matrix.arch }})
         shell: cmd
         run: |
@@ -47,29 +43,25 @@ jobs:
         env:
           QT_PATH: ${{ runner.workspace }}\Qt\${{ matrix.qt_version }}\${{ matrix.arch == 'arm64' && 'msvc2022_arm64' || 'msvc2022_64' }}\bin
 
-      # ← EXACT packaging from working commit
       - name: Package with Squirrel (${{ matrix.arch }})
         shell: cmd
+        working-directory: installer/squirrel
         run: |
-          cd %BUILD_ROOT%\installer\squirrel
-
-          REM Follow moonlight-qt: use passed release_version (from version.txt)
-          set VERSION=${{ github.event.client_payload.tag }}
-          set VERSION=%VERSION:v=%
+          set "VERSION=${{ github.event.client_payload.tag }}"
+          if "%VERSION:~0,1%"=="v" set "VERSION=%VERSION:~1%"
 
           if not exist nupkg mkdir nupkg
           if not exist Releases-${{ matrix.arch }} mkdir Releases-${{ matrix.arch }}
 
           if "${{ matrix.arch }}"=="x64" (
-            nuget pack Storm.nuspec -BasePath "..\..\build\deploy-x64-release" -OutputDirectory ".\nupkg" -Version %VERSION%
-            ".\Squirrel.Windows-1.9.1\Squirrel.exe" --releasify ".\nupkg\Storm.%VERSION%.nupkg" --releaseDir ".\Releases-x64" --no-msi
+            nuget.exe pack Storm.nuspec -BasePath "%GITHUB_WORKSPACE%\build\deploy-x64-release" -OutputDirectory "nupkg" -Version %VERSION%
+            Squirrel.Windows-1.9.1\Squirrel.exe --releasify "nupkg\Storm.%VERSION%.nupkg" --releaseDir "Releases-x64" --no-msi
           ) else (
-            nuget pack Storm-arm64.nuspec -BasePath "..\..\build\deploy-arm64-release" -OutputDirectory ".\nupkg" -Version %VERSION%
-            ".\Squirrel.Windows-1.9.1\Squirrel.exe" --releasify ".\nupkg\Storm-arm64.%VERSION%.nupkg" --releaseDir ".\Releases-arm64" --no-msi
-            ren ".\Releases-arm64\Setup.exe" "Setup-arm64.exe"
+            nuget.exe pack Storm-arm64.nuspec -BasePath "%GITHUB_WORKSPACE%\build\deploy-arm64-release" -OutputDirectory "nupkg" -Version %VERSION%
+            Squirrel.Windows-1.9.1\Squirrel.exe --releasify "nupkg\Storm-arm64.%VERSION%.nupkg" --releaseDir "Releases-arm64" --no-msi
+            ren "Releases-arm64\Setup.exe" "Setup-arm64.exe"
           )
 
-      # ← CHANGED for mule: Direct release upload instead of artifacts
       - name: Upload to Release (${{ matrix.arch }})
         uses: softprops/action-gh-release@v1
         with:
@@ -82,19 +74,17 @@ jobs:
             ./installer/squirrel/Releases-${{ matrix.arch }}/Storm${{ matrix.arch == 'arm64' && '-arm64' || '' }}*.nupkg
 
   build-linux:
-    runs-on: ubuntu-22.04  # ← EXACT runner from working commit
+    runs-on: ubuntu-22.04
     
     steps:
-      - name: Checkout Private Repo  # ← CHANGED for mule
+      - name: Checkout Private Repo
         uses: actions/checkout@v4
         with:
           repository: ${{ secrets.MAIN_REPO_NAME }}
           token: ${{ secrets.MAIN_REPO_PAT }}
           ref: ${{ github.event.client_payload.tag }}
           submodules: 'recursive'
-          fetch-depth: 1
 
-      # ← EXACT caching from working commit
       - name: Cache APT Packages
         uses: actions/cache@v4
         with:
@@ -109,7 +99,6 @@ jobs:
           path: /usr/local/bin/linuxdeployqt
           key: linuxdeployqt-${{ runner.os }}-continuous
 
-      # ← EXACT Qt installation from working commit
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
@@ -119,7 +108,6 @@ jobs:
           target: desktop
           arch: linux_gcc_64
 
-      # ← EXACT dependencies from working commit
       - name: Install Dependencies
         run: |
           sudo apt-get update
@@ -127,19 +115,15 @@ jobs:
 
       - name: Install linuxdeployqt
         run: |
-          if [ ! -f /usr/local/bin/linuxdeployqt ]; then
-            wget -q -O linuxdeployqt "https://github.com/linuxdeploy/linuxdeployqt/releases/download/continuous/linuxdeployqt-x86_64.AppImage"
-            chmod a+x linuxdeployqt
-            sudo mv linuxdeployqt /usr/local/bin/linuxdeployqt
-          fi
+          wget -q -O linuxdeployqt "https://github.com/linuxdeploy/linuxdeployqt/releases/download/continuous/linuxdeployqt-x86_64.AppImage"
+          chmod a+x linuxdeployqt
+          sudo mv linuxdeployqt /usr/local/bin/linuxdeployqt
 
-      # ← EXACT build step from working commit
       - name: Build AppImage
         run: |
-          export PATH="/opt/qt/6.8.0/gcc_64/bin:$PATH"
+          export PATH="/opt/qt/6.8.0/gcc_64/bin:/usr/local/bin:$PATH"
           bash scripts/build-appimage.sh
 
-      # ← CHANGED for mule: Direct release upload instead of artifacts
       - name: Upload to Release
         uses: softprops/action-gh-release@v1
         with:
