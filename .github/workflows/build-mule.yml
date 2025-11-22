@@ -129,11 +129,12 @@ jobs:
           sudo apt-get install -y $(cat .github/apt-requirements.txt | tr '\n' ' ')
       - name: Install linuxdeployqt
         run: |
-          if [ ! -f /usr/local/bin/linuxdeployqt ]; then
-            wget -q -O linuxdeployqt "https://github.com/linuxdeploy/linuxdeployqt/releases/download/continuous/linuxdeployqt-x86_64.AppImage"
-            chmod a+x linuxdeployqt
-            sudo mv linuxdeployqt /usr/local/bin/linuxdeployqt
-          fi
+          wget -q -O linuxdeployqt "https://github.com/linuxdeploy/linuxdeployqt/releases/download/continuous/linuxdeployqt-x86_64.AppImage"
+          chmod a+x linuxdeployqt
+          sudo mv linuxdeployqt /usr/local/bin/linuxdeployqt
+          # Ensure it's executable and in PATH
+          export PATH="/usr/local/bin:$PATH"
+          linuxdeployqt --version
       - name: Build AppImage
         run: |
           export PATH="/opt/qt/6.8.0/gcc_64/bin:$PATH"
