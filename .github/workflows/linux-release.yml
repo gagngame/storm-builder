@@ -1,0 +1,70 @@
+name: Build Mule - Linux AppImage
+permissions:
+  contents: write
+
+on:
+  repository_dispatch:
+    types: [build-request]
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Private Repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.MAIN_REPO_NAME }}
+          token: ${{ secrets.MAIN_REPO_PAT }}
+          ref: ${{ github.event.client_payload.tag }}
+          submodules: 'recursive'
+          fetch-depth: 1
+
+      - name: Cache APT Packages
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: apt-${{ runner.os }}-${{ hashFiles('.github/apt-requirements.txt') }}
+          restore-keys: |
+            apt-${{ runner.os }}-
+
+      - name: Cache linuxdeployqt
+        uses: actions/cache@v4
+        with:
+          path: /usr/local/bin/linuxdeployqt
+          key: linuxdeployqt-${{ runner.os }}-continuous
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          cache: true
+          version: 6.8.0
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y $(cat .github/apt-requirements.txt | tr '\n' ' ')
+
+      - name: Install linuxdeployqt
+        run: |
+          if [ ! -f /usr/local/bin/linuxdeployqt ]; then
+            wget -q -O linuxdeployqt "https://github.com/linuxdeploy/linuxdeployqt/releases/download/continuous/linuxdeployqt-x86_64.AppImage"
+            chmod a+x linuxdeployqt
+            sudo mv linuxdeployqt /usr/local/bin/linuxdeployqt
+          fi
+
+      - name: Build AppImage
+        run: |
+          export PATH="/opt/qt/6.8.0/gcc_64/bin:$PATH"
+          bash scripts/build-appimage.sh
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.client_payload.tag }}
+          files: build/installer-release/*.AppImage
+        env:
+          GITHUB_TOKEN: ${{ secrets.MAIN_REPO_PAT }}
