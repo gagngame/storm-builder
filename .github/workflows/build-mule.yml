@@ -1,0 +1,120 @@
+name: Build Mule
+on:
+  repository_dispatch:
+    types: [build-request]
+
+jobs:
+  build-linux:
+    runs-on: ubuntu-22.04
+    
+    steps:
+      - name: Checkout Private Repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.MAIN_REPO_NAME }}
+          token: ${{ secrets.MAIN_REPO_PAT }}
+          ref: ${{ github.event.client_payload.tag }}
+          submodules: 'recursive'
+          fetch-depth: 1
+
+      - name: Cache APT Packages
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: apt-${{ runner.os }}-${{ hashFiles('.github/apt-requirements.txt') }}
+          restore-keys: |
+            apt-${{ runner.os }}-
+
+      - name: Cache linuxdeployqt
+        uses: actions/cache@v4
+        with:
+          path: /usr/local/bin/linuxdeployqt
+          key: linuxdeployqt-${{ runner.os }}-continuous
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          cache: true
+          version: 6.8.0
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y $(cat .github/apt-requirements.txt | tr '\n' ' ')
+
+      - name: Install linuxdeployqt
+        run: |
+          if [ ! -f /usr/local/bin/linuxdeployqt ]; then
+            wget -q -O linuxdeployqt "https://github.com/linuxdeploy/linuxdeployqt/releases/download/continuous/linuxdeployqt-x86_64.AppImage"
+            chmod a+x linuxdeployqt
+            sudo mv linuxdeployqt /usr/local/bin/linuxdeployqt
+          fi
+
+      - name: Build AppImage
+        run: |
+          export PATH="/opt/qt/6.8.0/gcc_64/bin:$PATH"
+          bash scripts/build-appimage.sh
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v1
+        with:
+          token: ${{ secrets.MAIN_REPO_PAT }}
+          repository: ${{ secrets.MAIN_REPO_NAME }}
+          tag_name: ${{ github.event.client_payload.tag }}
+          files: ./build/installer-release/*.AppImage
+
+  build-windows:
+    runs-on: windows-2025
+    strategy:
+      matrix:
+        include:
+          - arch: x64
+            qt_version: 6.10.1
+          - arch: arm64
+            qt_version: 6.10.0
+    
+    env:
+      BUILD_ROOT: ${{ github.workspace }}
+    
+    steps:
+      - name: Checkout Private Repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.MAIN_REPO_NAME }}
+          token: ${{ secrets.MAIN_REPO_PAT }}
+          ref: ${{ github.event.client_payload.tag }}
+          submodules: 'recursive'
+          fetch-depth: 1
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          cache: true
+          set-env: false
+          add-tools-to-path: false
+          version: ${{ matrix.qt_version }}
+          arch: ${{ matrix.arch == 'arm64' && 'win64_msvc2022_arm64_cross_compiled' || 'win64_msvc2022_64' }}
+
+      - name: Build Storm (${{ matrix.arch }})
+        shell: cmd
+        run: |
+          set "PATH=%QT_PATH%;%PATH%"
+          scripts\build-arch.bat Release ${{ matrix.arch }}
+        env:
+          QT_PATH: ${{ runner.workspace }}\Qt\${{ matrix.qt_version }}\${{ matrix.arch == 'arm64' && 'msvc2022_arm64' || 'msvc2022_64' }}\bin
+
+      - name: Package MSI
+        shell: cmd
+        run: |
+          scripts\generate-bundle.bat Release
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v1
+        with:
+          token: ${{ secrets.MAIN_REPO_PAT }}
+          repository: ${{ secrets.MAIN_REPO_NAME }}
+          tag_name: ${{ github.event.client_payload.tag }}
+          files: ./build/installer-Release/*.msi
