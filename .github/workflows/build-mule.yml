@@ -13,7 +13,7 @@ jobs:
             qt_version: 6.10.1
             qt_arch: win64_msvc2022_64
           - arch: arm64
-            qt_version: 6.10.0
+            qt_version: 6.7.0      # Use this for ARM64, as 6.10.0 doesn't exist
             qt_arch: win64_msvc2022_arm64
 
     steps:
@@ -29,18 +29,16 @@ jobs:
         id: qt
         uses: jurplel/install-qt-action@v4
         with:
-          cache: true
           version: ${{ matrix.qt_version }}
           arch: ${{ matrix.qt_arch }}
-          # No modules (Qt 6 desktop includes everything you need)
 
       - name: Build Storm (${{ matrix.arch }})
         shell: cmd
         env:
           QT_ROOT: ${{ steps.qt.outputs.qt-path }}
-          CMAKE_PREFIX_PATH: ${{ steps.qt.outputs.qt-path }}
         run: |
           set "PATH=%QT_ROOT%\bin;%PATH%"
+          set CI=1
           call scripts\build-arch.bat Release ${{ matrix.arch }}
 
       - name: Package with Squirrel (${{ matrix.arch }})
@@ -50,42 +48,21 @@ jobs:
           set "VERSION=${{ github.event.client_payload.tag }}"
           if "%VERSION:~0,1%"=="v" set "VERSION=%VERSION:~1%"
 
-          echo Creating directories...
           if not exist nupkg mkdir nupkg
           if not exist Releases-${{ matrix.arch }} mkdir Releases-${{ matrix.arch }}
 
-          echo Version: %VERSION%
-
           if "${{ matrix.arch }}"=="x64" (
-            echo Building x64 package...
             nuget.exe pack Storm.nuspec -BasePath "%GITHUB_WORKSPACE%\build\deploy-x64-release" -OutputDirectory nupkg -Version %VERSION%
-            if %ERRORLEVEL% neq 0 (
-              echo NuGet pack failed
-              exit /b 1
-            )
-            echo Running Squirrel for x64...
+            if %ERRORLEVEL% neq 0 exit /b 1
             Squirrel.Windows-1.9.1\Squirrel.exe --releasify "nupkg\Storm.%VERSION%.nupkg" --releaseDir "Releases-x64" --no-msi
-            if %ERRORLEVEL% neq 0 (
-              echo Squirrel failed for x64
-              exit /b 1
-            )
+            if %ERRORLEVEL% neq 0 exit /b 1
           ) else (
-            echo Building ARM64 package...
             nuget.exe pack Storm-arm64.nuspec -BasePath "%GITHUB_WORKSPACE%\build\deploy-arm64-release" -OutputDirectory nupkg -Version %VERSION%
-            if %ERRORLEVEL% neq 0 (
-              echo NuGet pack failed for ARM64
-              exit /b 1
-            )
-            echo Running Squirrel for ARM64...
+            if %ERRORLEVEL% neq 0 exit /b 1
             Squirrel.Windows-1.9.1\Squirrel.exe --releasify "nupkg\Storm-arm64.%VERSION%.nupkg" --releaseDir "Releases-arm64" --no-msi
-            if %ERRORLEVEL% neq 0 (
-              echo Squirrel failed for ARM64
-              exit /b 1
-            )
+            if %ERRORLEVEL% neq 0 exit /b 1
             ren "Releases-arm64\Setup.exe" "Setup-arm64.exe"
           )
-
-          echo Squirrel packaging completed successfully
 
       - name: Upload to Release (${{ matrix.arch }})
         uses: softprops/action-gh-release@v1
@@ -141,7 +118,8 @@ jobs:
       - name: Install linuxdeployqt
         run: |
           if ! [ -f /usr/local/bin/linuxdeployqt ]; then
-            wget -q -O linuxdeployqt "https://github.com/linuxdeploy/linuxdeployqt/releases/download/continuous/linuxdeployqt-x86_64.AppImage"
+            wget --retry-connrefused --waitretry=1 --read-timeout=20 --timeout=15 -t 3 \
+              -O linuxdeployqt "https://github.com/linuxdeploy/linuxdeployqt/releases/download/continuous/linuxdeployqt-x86_64.AppImage"
             chmod a+x linuxdeployqt
             sudo mv linuxdeployqt /usr/local/bin/linuxdeployqt
           fi
