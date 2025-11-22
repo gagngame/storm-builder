@@ -5,20 +5,21 @@ on:
 
 jobs:
   build-windows:
-    runs-on: windows-2025
+    runs-on: windows-2025  # ← EXACT runner from working commit
     strategy:
       matrix:
         include:
+          # ← EXACT configuration from working commit
           - arch: x64
             qt_version: 6.10.1
           - arch: arm64
             qt_version: 6.10.0
 
     env:
-      BUILD_ROOT: ${{ github.workspace }}
+      BUILD_ROOT: ${{ github.workspace }}  # ← EXACT env from working commit
 
     steps:
-      - name: Checkout Private Repo
+      - name: Checkout Private Repo  # ← CHANGED for mule
         uses: actions/checkout@v4
         with:
           repository: ${{ secrets.MAIN_REPO_NAME }}
@@ -27,6 +28,7 @@ jobs:
           submodules: 'recursive'
           fetch-depth: 1
 
+      # ← EXACT Qt installation from working commit
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
@@ -36,6 +38,7 @@ jobs:
           version: ${{ matrix.qt_version }}
           arch: ${{ matrix.arch == 'arm64' && 'win64_msvc2022_arm64_cross_compiled' || 'win64_msvc2022_64' }}
 
+      # ← EXACT build step from working commit
       - name: Build Storm (${{ matrix.arch }})
         shell: cmd
         run: |
@@ -44,37 +47,29 @@ jobs:
         env:
           QT_PATH: ${{ runner.workspace }}\Qt\${{ matrix.qt_version }}\${{ matrix.arch == 'arm64' && 'msvc2022_arm64' || 'msvc2022_64' }}\bin
 
+      # ← EXACT packaging from working commit
       - name: Package with Squirrel (${{ matrix.arch }})
         shell: cmd
         run: |
           cd %BUILD_ROOT%\installer\squirrel
 
-          REM Extract version from tag (remove 'v' prefix)
-          set TAG=${{ github.event.client_payload.tag }}
-          set VERSION=%TAG:v=%
-          echo Packaging version: %VERSION%
-
-          REM Debug: Check if Squirrel exists
-          dir ".\Squirrel.Windows-1.9.1\Squirrel.exe" 2>nul || echo "Squirrel.exe not found!"
+          REM Follow moonlight-qt: use passed release_version (from version.txt)
+          set VERSION=${{ github.event.client_payload.tag }}
+          set VERSION=%VERSION:v=%
 
           if not exist nupkg mkdir nupkg
           if not exist Releases-${{ matrix.arch }} mkdir Releases-${{ matrix.arch }}
 
           if "${{ matrix.arch }}"=="x64" (
-            echo Creating x64 package...
             nuget pack Storm.nuspec -BasePath "..\..\build\deploy-x64-release" -OutputDirectory ".\nupkg" -Version %VERSION%
-            REM Debug: Check if nupkg was created
-            dir ".\nupkg\Storm.%VERSION%.nupkg" 2>nul || echo "x64 nupkg not found!"
             ".\Squirrel.Windows-1.9.1\Squirrel.exe" --releasify ".\nupkg\Storm.%VERSION%.nupkg" --releaseDir ".\Releases-x64" --no-msi
           ) else (
-            echo Creating ARM64 package...
             nuget pack Storm-arm64.nuspec -BasePath "..\..\build\deploy-arm64-release" -OutputDirectory ".\nupkg" -Version %VERSION%
-            REM Debug: Check if nupkg was created
-            dir ".\nupkg\Storm-arm64.%VERSION%.nupkg" 2>nul || echo "ARM64 nupkg not found!"
             ".\Squirrel.Windows-1.9.1\Squirrel.exe" --releasify ".\nupkg\Storm-arm64.%VERSION%.nupkg" --releaseDir ".\Releases-arm64" --no-msi
             ren ".\Releases-arm64\Setup.exe" "Setup-arm64.exe"
           )
 
+      # ← CHANGED for mule: Direct release upload instead of artifacts
       - name: Upload to Release (${{ matrix.arch }})
         uses: softprops/action-gh-release@v1
         with:
@@ -87,10 +82,10 @@ jobs:
             ./installer/squirrel/Releases-${{ matrix.arch }}/Storm${{ matrix.arch == 'arm64' && '-arm64' || '' }}*.nupkg
 
   build-linux:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-22.04  # ← EXACT runner from working commit
     
     steps:
-      - name: Checkout Private Repo
+      - name: Checkout Private Repo  # ← CHANGED for mule
         uses: actions/checkout@v4
         with:
           repository: ${{ secrets.MAIN_REPO_NAME }}
@@ -99,6 +94,7 @@ jobs:
           submodules: 'recursive'
           fetch-depth: 1
 
+      # ← EXACT caching from working commit
       - name: Cache APT Packages
         uses: actions/cache@v4
         with:
@@ -106,12 +102,14 @@ jobs:
           key: apt-${{ runner.os }}-${{ hashFiles('.github/apt-requirements.txt') }}
           restore-keys: |
             apt-${{ runner.os }}-
+
       - name: Cache linuxdeployqt
         uses: actions/cache@v4
         with:
           path: /usr/local/bin/linuxdeployqt
           key: linuxdeployqt-${{ runner.os }}-continuous
 
+      # ← EXACT Qt installation from working commit
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
@@ -121,25 +119,27 @@ jobs:
           target: desktop
           arch: linux_gcc_64
 
+      # ← EXACT dependencies from working commit
       - name: Install Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y $(cat .github/apt-requirements.txt | tr '\n' ' ')
+
       - name: Install linuxdeployqt
         run: |
-          wget -q -O linuxdeployqt "https://github.com/linuxdeploy/linuxdeployqt/releases/download/continuous/linuxdeployqt-x86_64.AppImage"
-          chmod a+x linuxdeployqt
-          sudo mv linuxdeployqt /usr/local/bin/linuxdeployqt
-          # Test that it's working
-          /usr/local/bin/linuxdeployqt --version || echo "linuxdeployqt version check failed"
+          if [ ! -f /usr/local/bin/linuxdeployqt ]; then
+            wget -q -O linuxdeployqt "https://github.com/linuxdeploy/linuxdeployqt/releases/download/continuous/linuxdeployqt-x86_64.AppImage"
+            chmod a+x linuxdeployqt
+            sudo mv linuxdeployqt /usr/local/bin/linuxdeployqt
+          fi
+
+      # ← EXACT build step from working commit
       - name: Build AppImage
         run: |
-          export PATH="/opt/qt/6.8.0/gcc_64/bin:/usr/local/bin:$PATH"
-          echo "PATH: $PATH"
-          ls -la /usr/local/bin/linuxdeployqt || echo "linuxdeployqt file not found"
-          which linuxdeployqt || echo "linuxdeployqt not in PATH"
-          /usr/local/bin/linuxdeployqt --version || echo "linuxdeployqt failed to run"
+          export PATH="/opt/qt/6.8.0/gcc_64/bin:$PATH"
           bash scripts/build-appimage.sh
+
+      # ← CHANGED for mule: Direct release upload instead of artifacts
       - name: Upload to Release
         uses: softprops/action-gh-release@v1
         with:
