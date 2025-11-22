@@ -54,16 +54,23 @@ jobs:
           set VERSION=%TAG:v=%
           echo Packaging version: %VERSION%
 
+          REM Debug: Check if Squirrel exists
+          dir ".\Squirrel.Windows-1.9.1\Squirrel.exe" 2>nul || echo "Squirrel.exe not found!"
+
           if not exist nupkg mkdir nupkg
           if not exist Releases-${{ matrix.arch }} mkdir Releases-${{ matrix.arch }}
 
           if "${{ matrix.arch }}"=="x64" (
             echo Creating x64 package...
             nuget pack Storm.nuspec -BasePath "..\..\build\deploy-x64-release" -OutputDirectory ".\nupkg" -Version %VERSION%
+            REM Debug: Check if nupkg was created
+            dir ".\nupkg\Storm.%VERSION%.nupkg" 2>nul || echo "x64 nupkg not found!"
             ".\Squirrel.Windows-1.9.1\Squirrel.exe" --releasify ".\nupkg\Storm.%VERSION%.nupkg" --releaseDir ".\Releases-x64" --no-msi
           ) else (
             echo Creating ARM64 package...
             nuget pack Storm-arm64.nuspec -BasePath "..\..\build\deploy-arm64-release" -OutputDirectory ".\nupkg" -Version %VERSION%
+            REM Debug: Check if nupkg was created
+            dir ".\nupkg\Storm-arm64.%VERSION%.nupkg" 2>nul || echo "ARM64 nupkg not found!"
             ".\Squirrel.Windows-1.9.1\Squirrel.exe" --releasify ".\nupkg\Storm-arm64.%VERSION%.nupkg" --releaseDir ".\Releases-arm64" --no-msi
             ren ".\Releases-arm64\Setup.exe" "Setup-arm64.exe"
           )
@@ -128,7 +135,10 @@ jobs:
       - name: Build AppImage
         run: |
           export PATH="/opt/qt/6.8.0/gcc_64/bin:/usr/local/bin:$PATH"
-          which linuxdeployqt || echo "linuxdeployqt not found in PATH"
+          echo "PATH: $PATH"
+          ls -la /usr/local/bin/linuxdeployqt || echo "linuxdeployqt file not found"
+          which linuxdeployqt || echo "linuxdeployqt not in PATH"
+          /usr/local/bin/linuxdeployqt --version || echo "linuxdeployqt failed to run"
           bash scripts/build-appimage.sh
       - name: Upload to Release
         uses: softprops/action-gh-release@v1
