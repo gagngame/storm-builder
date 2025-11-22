@@ -48,21 +48,46 @@ jobs:
         run: |
           cd installer/squirrel
           
-          REM Simple version extraction
-          set VERSION=${{ github.event.client_payload.tag }}
-          set VERSION=%VERSION:~1%
+          REM Extract version from tag
+          set "VERSION=${{ github.event.client_payload.tag }}"
+          set "VERSION=%VERSION:~1%"
           
+          echo Creating directories...
           if not exist nupkg mkdir nupkg
           if not exist Releases-${{ matrix.arch }} mkdir Releases-${{ matrix.arch }}
           
+          echo Version: %VERSION%
+          
           if "${{ matrix.arch }}"=="x64" (
+            echo Building x64 package...
             nuget.exe pack Storm.nuspec -BasePath "%GITHUB_WORKSPACE%\build\deploy-x64-release" -OutputDirectory nupkg -Version %VERSION%
-            Squirrel.Windows-1.9.1\Squirrel.exe --releasify nupkg\Storm.%VERSION%.nupkg --releaseDir Releases-x64 --no-msi
+            if %ERRORLEVEL% neq 0 (
+              echo NuGet pack failed
+              exit /b 1
+            )
+            echo Running Squirrel for x64...
+            "Squirrel.Windows-1.9.1\Squirrel.exe" --releasify "nupkg\Storm.%VERSION%.nupkg" --releaseDir "Releases-x64" --no-msi
+            if %ERRORLEVEL% neq 0 (
+              echo Squirrel failed for x64
+              exit /b 1
+            )
           ) else (
+            echo Building ARM64 package...
             nuget.exe pack Storm-arm64.nuspec -BasePath "%GITHUB_WORKSPACE%\build\deploy-arm64-release" -OutputDirectory nupkg -Version %VERSION%
-            Squirrel.Windows-1.9.1\Squirrel.exe --releasify nupkg\Storm-arm64.%VERSION%.nupkg --releaseDir Releases-arm64 --no-msi
-            ren Releases-arm64\Setup.exe Setup-arm64.exe
+            if %ERRORLEVEL% neq 0 (
+              echo NuGet pack failed for ARM64
+              exit /b 1
+            )
+            echo Running Squirrel for ARM64...
+            "Squirrel.Windows-1.9.1\Squirrel.exe" --releasify "nupkg\Storm-arm64.%VERSION%.nupkg" --releaseDir "Releases-arm64" --no-msi
+            if %ERRORLEVEL% neq 0 (
+              echo Squirrel failed for ARM64
+              exit /b 1
+            )
+            ren "Releases-arm64\Setup.exe" "Setup-arm64.exe"
           )
+          
+          echo Squirrel packaging completed successfully
 
       - name: Upload to Release (${{ matrix.arch }})
         uses: softprops/action-gh-release@v1
@@ -124,7 +149,9 @@ jobs:
       - name: Build AppImage
         run: |
           export PATH="/usr/local/bin:$PATH"
-          linuxdeployqt --version || exit 1
+          echo "Testing linuxdeployqt..."
+          linuxdeployqt --version
+          echo "Running build script..."
           bash scripts/build-appimage.sh
 
       - name: Upload to Release
