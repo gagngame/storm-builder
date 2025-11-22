@@ -45,21 +45,23 @@ jobs:
 
       - name: Package with Squirrel (${{ matrix.arch }})
         shell: cmd
-        working-directory: installer/squirrel
         run: |
-          set "VERSION=${{ github.event.client_payload.tag }}"
-          if "%VERSION:~0,1%"=="v" set "VERSION=%VERSION:~1%"
-
+          cd installer/squirrel
+          
+          REM Simple version extraction
+          set VERSION=${{ github.event.client_payload.tag }}
+          set VERSION=%VERSION:~1%
+          
           if not exist nupkg mkdir nupkg
           if not exist Releases-${{ matrix.arch }} mkdir Releases-${{ matrix.arch }}
-
+          
           if "${{ matrix.arch }}"=="x64" (
-            nuget.exe pack Storm.nuspec -BasePath "%GITHUB_WORKSPACE%\build\deploy-x64-release" -OutputDirectory "nupkg" -Version %VERSION%
-            Squirrel.Windows-1.9.1\Squirrel.exe --releasify "nupkg\Storm.%VERSION%.nupkg" --releaseDir "Releases-x64" --no-msi
+            nuget.exe pack Storm.nuspec -BasePath "%GITHUB_WORKSPACE%\build\deploy-x64-release" -OutputDirectory nupkg -Version %VERSION%
+            Squirrel.Windows-1.9.1\Squirrel.exe --releasify nupkg\Storm.%VERSION%.nupkg --releaseDir Releases-x64 --no-msi
           ) else (
-            nuget.exe pack Storm-arm64.nuspec -BasePath "%GITHUB_WORKSPACE%\build\deploy-arm64-release" -OutputDirectory "nupkg" -Version %VERSION%
-            Squirrel.Windows-1.9.1\Squirrel.exe --releasify "nupkg\Storm-arm64.%VERSION%.nupkg" --releaseDir "Releases-arm64" --no-msi
-            ren "Releases-arm64\Setup.exe" "Setup-arm64.exe"
+            nuget.exe pack Storm-arm64.nuspec -BasePath "%GITHUB_WORKSPACE%\build\deploy-arm64-release" -OutputDirectory nupkg -Version %VERSION%
+            Squirrel.Windows-1.9.1\Squirrel.exe --releasify nupkg\Storm-arm64.%VERSION%.nupkg --releaseDir Releases-arm64 --no-msi
+            ren Releases-arm64\Setup.exe Setup-arm64.exe
           )
 
       - name: Upload to Release (${{ matrix.arch }})
@@ -121,7 +123,8 @@ jobs:
 
       - name: Build AppImage
         run: |
-          export PATH="/opt/qt/6.8.0/gcc_64/bin:/usr/local/bin:$PATH"
+          export PATH="/usr/local/bin:$PATH"
+          linuxdeployqt --version || exit 1
           bash scripts/build-appimage.sh
 
       - name: Upload to Release
