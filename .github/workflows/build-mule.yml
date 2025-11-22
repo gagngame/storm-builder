@@ -67,7 +67,7 @@ jobs:
           files: ./build/installer-release/*.AppImage
 
   build-windows:
-    runs-on: windows-latest
+    runs-on: windows-latest  # Changed from windows-2025, but should still work
     strategy:
       matrix:
         include:
@@ -89,12 +89,13 @@ jobs:
           submodules: 'recursive'
           fetch-depth: 1
 
+      # EXACT COPY of working Qt installation from original commit
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
           cache: true
-          set-env: false
-          add-tools-to-path: false
+          set-env: false          # ← CRITICAL: Same as original working config
+          add-tools-to-path: false # ← CRITICAL: Same as original working config
           version: ${{ matrix.qt_version }}
           arch: ${{ matrix.arch == 'arm64' && 'win64_msvc2022_arm64_cross_compiled' || 'win64_msvc2022_64' }}
 
